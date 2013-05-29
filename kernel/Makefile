@@ -16,6 +16,7 @@ obj-y     = sched.o dma.o fork.o exec_domain.o panic.o printk.o \
 	    sysctl.o acct.o capability.o ptrace.o timer.o user.o \
 	    signal.o sys.o kmod.o context.o
 
+obj-$(CONFIG_IPIPE) += ipipe/ipipe.o
 obj-$(CONFIG_UID16) += uid16.o
 obj-$(CONFIG_MODULES) += ksyms.o
 obj-$(CONFIG_PM) += pm.o
@@ -28,5 +29,7 @@ ifneq ($(CONFIG_IA64),y)
 # to get a correct value for the wait-channel (WCHAN in ps). --davidm
 CFLAGS_sched.o := $(PROFILING) -fno-omit-frame-pointer
 endif
+
+subdir-$(CONFIG_IPIPE) += ipipe
 
 include $(TOPDIR)/Rules.make

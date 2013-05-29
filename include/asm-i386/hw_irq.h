@@ -123,6 +123,37 @@ extern char _stext, _etext;
 
 	/* there is a second layer of macro just to get the symbolic
 	   name for the vector evaluated. This change is for RTLinux */
+
+#ifdef CONFIG_IPIPE
+
+#define BUILD_SMP_INTERRUPT(x,v)	XBUILD_SMP_INTERRUPT(x,v)
+#define BUILD_SMP_TIMER_INTERRUPT(x,v)	XBUILD_SMP_INTERRUPT(x,v)
+#define XBUILD_SMP_INTERRUPT(x,v)\
+asmlinkage void x(void); \
+asmlinkage void call_##x(void); \
+__asm__( \
+"\n"__ALIGN_STR"\n" \
+SYMBOL_NAME_STR(x) ":\n\t" \
+	"pushl $"#v"-288\n\t" /* nr - (256 + FIRST_EXTERNAL_VECTOR) */ \
+	SAVE_ALL \
+        "call "SYMBOL_NAME_STR(__ipipe_handle_irq)"\n\t"   \
+	"testl %eax,%eax\n\t"	\
+	"jnz ret_from_intr\n\t" \
+        "jmp restore_raw\n");
+
+#define BUILD_COMMON_IRQ() \
+asmlinkage void call_do_IRQ(void); \
+__asm__( \
+	"\n" __ALIGN_STR"\n" \
+	"common_interrupt:\n\t" \
+	SAVE_ALL \
+        "call "SYMBOL_NAME_STR(__ipipe_handle_irq)"\n\t"   \
+	"testl %eax,%eax\n\t"	\
+	"jnz ret_from_intr\n\t" \
+        "jmp restore_raw\n");
+
+#else /* !CONFIG_IPIPE */
+
 #define BUILD_SMP_INTERRUPT(x,v) XBUILD_SMP_INTERRUPT(x,v)
 #define XBUILD_SMP_INTERRUPT(x,v)\
 asmlinkage void x(void); \
@@ -161,6 +192,8 @@ __asm__( \
 	SYMBOL_NAME_STR(call_do_IRQ)":\n\t" \
 	"call " SYMBOL_NAME_STR(do_IRQ) "\n\t" \
 	"jmp ret_from_intr\n");
+
+#endif /* CONFIG_IPIPE */
 
 /* 
  * subtle. orig_eax is used by the signal code to distinct between

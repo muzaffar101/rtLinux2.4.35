@@ -45,7 +45,45 @@
 #include <linux/linkage.h>
 #include <asm/segment.h>
 #include <asm/smp.h>
+#include <asm/ipipe.h>
 
+#ifdef CONFIG_IPIPE
+#define CLI                     call SYMBOL_NAME(__ipipe_stall_root) ; sti
+#define STI                     call SYMBOL_NAME(__ipipe_unstall_root)
+#define STI_COND_HW             sti
+#define EMULATE_ROOT_IRET(bypass) call SYMBOL_NAME(__ipipe_unstall_iret_root) ; \
+				  ENTRY(bypass)
+#define CATCH_ROOT_SYSCALL(bypass1,bypass2)	\
+				call SYMBOL_NAME(__ipipe_syscall_root) ; \
+				testl  %eax,%eax ; \
+				js    bypass1 ; \
+				jne   bypass2 ; \
+				movl ORIG_EAX(%esp),%eax
+#define PUSH_XCODE(v)		pushl $ SYMBOL_NAME( ex_/**/v )
+#define HANDLE_EXCEPTION(code)	pushl %code ; /* WARNING: arg marshalling != 2.6 version */	\
+				call SYMBOL_NAME(__ipipe_handle_exception) ; \
+				addl $12,%esp ; \
+				testl %eax,%eax	; \
+				jnz restore_raw
+#define DIVERT_EXCEPTION(code)	movl %esp, %eax	; \
+				movl $ SYMBOL_NAME ( ex_/**/code ) ,%edx ; \
+				call SYMBOL_NAME(__ipipe_divert_exception) ; \
+				testl %eax,%eax	; \
+				jnz restore_raw
+
+#else  /* !CONFIG_IPIPE */
+#define CLI                     cli
+#define STI                     sti
+#define STI_COND_HW
+#define EMULATE_ROOT_IRET(bypass)
+#define CATCH_ROOT_SYSCALL(bypass1,bypass2)
+
+#define PUSH_XCODE(v)		pushl $ SYMBOL_NAME(v)
+#define HANDLE_EXCEPTION(code)	call *%code ; \
+				addl $8,%esp
+#define DIVERT_EXCEPTION(code)
+#endif /* CONFIG_IPIPE */
+	
 EBX		= 0x00
 ECX		= 0x04
 EDX		= 0x08
@@ -184,6 +222,7 @@ ENTRY(lcall27)
 
 
 ENTRY(ret_from_fork)
+	STI_COND_HW	
 	pushl %ebx
 	call SYMBOL_NAME(schedule_tail)
 	addl $4, %esp
@@ -203,6 +242,9 @@ ENTRY(system_call)
 	pushl %eax			# save orig_eax
 	SAVE_ALL
 	GET_CURRENT(%ebx)
+	/* %ebx is caller-saved, so that's ok to go through
+	   __ipipe_syscall_root() without saving it. */
+	CATCH_ROOT_SYSCALL(ret_from_sys_call,restore_raw)
 	testb $0x02,tsk_ptrace(%ebx)	# PT_TRACESYS
 	jne tracesys
 	cmpl $(NR_syscalls),%eax
@@ -210,17 +252,18 @@ ENTRY(system_call)
 	call *SYMBOL_NAME(sys_call_table)(,%eax,4)
 	movl %eax,EAX(%esp)		# save the return value
 ENTRY(ret_from_sys_call)
-	cli				# need_resched and signals atomic test
+	CLI				# need_resched and signals atomic test
 	cmpl $0,need_resched(%ebx)
 	jne reschedule
 	cmpl $0,sigpending(%ebx)
 	jne signal_return
 restore_all:
+	EMULATE_ROOT_IRET(restore_raw)
 	RESTORE_ALL
 
 	ALIGN
 signal_return:
-	sti				# we can get here from an interrupt handler
+	STI				# we can get here from an interrupt handler
 	testl $(VM_MASK),EFLAGS(%esp)
 	movl %esp,%eax
 	jne v86_signal_return
@@ -269,7 +312,7 @@ reschedule:
 
 ENTRY(divide_error)
 	pushl $0		# no error code
-	pushl $ SYMBOL_NAME(do_divide_error)
+	PUSH_XCODE(do_divide_error)
 	ALIGN
 error_code:
 	pushl %ds
@@ -295,23 +338,23 @@ error_code:
 	movl %edx,%ds
 	movl %edx,%es
 	GET_CURRENT(%ebx)
-	call *%edi
-	addl $8,%esp
+	HANDLE_EXCEPTION(edi)
 	jmp ret_from_exception
 
 ENTRY(coprocessor_error)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_coprocessor_error)
+	PUSH_XCODE(do_coprocessor_error)
 	jmp error_code
 
 ENTRY(simd_coprocessor_error)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_simd_coprocessor_error)
+	PUSH_XCODE(do_simd_coprocessor_error)
 	jmp error_code
 
 ENTRY(device_not_available)
 	pushl $-1		# mark this as an int
 	SAVE_ALL
+	DIVERT_EXCEPTION(device_not_available)
 	GET_CURRENT(%ebx)
 	movl %cr0,%eax
 	testl $0x4,%eax			# EM (math emulation bit)
@@ -326,7 +369,7 @@ device_not_available_emulate:
 
 ENTRY(debug)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_debug)
+	PUSH_XCODE(do_debug)
 	jmp error_code
 
 ENTRY(nmi)
@@ -341,27 +384,27 @@ ENTRY(nmi)
 
 ENTRY(int3)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_int3)
+	PUSH_XCODE(do_int3)
 	jmp error_code
 
 ENTRY(overflow)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_overflow)
+	PUSH_XCODE(do_overflow)
 	jmp error_code
 
 ENTRY(bounds)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_bounds)
+	PUSH_XCODE(do_bounds)	
 	jmp error_code
 
 ENTRY(invalid_op)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_invalid_op)
+	PUSH_XCODE(do_invalid_op)	
 	jmp error_code
 
 ENTRY(coprocessor_segment_overrun)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_coprocessor_segment_overrun)
+	PUSH_XCODE(do_coprocessor_segment_overrun)
 	jmp error_code
 
 ENTRY(double_fault)
@@ -369,37 +412,37 @@ ENTRY(double_fault)
 	jmp error_code
 
 ENTRY(invalid_TSS)
-	pushl $ SYMBOL_NAME(do_invalid_TSS)
+	PUSH_XCODE(do_invalid_TSS)	
 	jmp error_code
 
 ENTRY(segment_not_present)
-	pushl $ SYMBOL_NAME(do_segment_not_present)
+	PUSH_XCODE(do_segment_not_present)
 	jmp error_code
 
 ENTRY(stack_segment)
-	pushl $ SYMBOL_NAME(do_stack_segment)
+	PUSH_XCODE(do_stack_segment)
 	jmp error_code
 
 ENTRY(general_protection)
-	pushl $ SYMBOL_NAME(do_general_protection)
+	PUSH_XCODE(do_general_protection)	
 	jmp error_code
 
 ENTRY(alignment_check)
-	pushl $ SYMBOL_NAME(do_alignment_check)
+	PUSH_XCODE(do_alignment_check)
 	jmp error_code
 
 ENTRY(page_fault)
-	pushl $ SYMBOL_NAME(do_page_fault)
+	PUSH_XCODE(do_page_fault)
 	jmp error_code
 
 ENTRY(machine_check)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_machine_check)
+	PUSH_XCODE(do_machine_check)
 	jmp error_code
 
 ENTRY(spurious_interrupt_bug)
 	pushl $0
-	pushl $ SYMBOL_NAME(do_spurious_interrupt_bug)
+	PUSH_XCODE(do_spurious_interrupt_bug)
 	jmp error_code
 
 .data

@@ -62,6 +62,11 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next, str
 }
 
 #define activate_mm(prev, next) \
-	switch_mm((prev),(next),NULL,smp_processor_id())
-
+do { \
+	unsigned long flags; \
+	local_irq_save_hw_cond(flags); \
+	switch_mm((prev),(next),NULL,smp_processor_id()); \
+	local_irq_restore_hw_cond(flags); \
+} while(0)
+    
 #endif

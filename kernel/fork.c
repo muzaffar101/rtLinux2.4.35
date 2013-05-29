@@ -286,6 +286,7 @@ void mmput(struct mm_struct *mm)
 		mmlist_nr--;
 		spin_unlock(&mmlist_lock);
 		exit_mmap(mm);
+		ipipe_cleanup_notify(mm);
 		mmdrop(mm);
 	}
 }
@@ -603,7 +604,7 @@ static inline void copy_flags(unsigned long clone_flags, struct task_struct *p)
 {
 	unsigned long new_flags = p->flags;
 
-	new_flags &= ~(PF_SUPERPRIV | PF_USEDFPU);
+	new_flags &= ~(PF_SUPERPRIV | PF_USEDFPU | PF_EVNOTIFY);
 	new_flags |= PF_FORKNOEXEC;
 	if (!(clone_flags & CLONE_PTRACE))
 		p->ptrace = 0;
@@ -823,6 +824,14 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
 	if (p->ptrace & PT_PTRACED)
 		send_sig(SIGSTOP, p, 1);
 
+#ifdef CONFIG_IPIPE
+	{
+	int k;
+
+	for (k = 0; k < IPIPE_ROOT_NPTDKEYS; k++)
+	    p->ptd[k] = NULL;
+	}
+#endif /* CONFIG_IPIPE */
 	wake_up_process(p);		/* do this last */
 	++total_forks;
 	if (clone_flags & CLONE_VFORK)

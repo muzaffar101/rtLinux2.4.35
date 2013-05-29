@@ -165,6 +165,7 @@ static inline int __vmalloc_area_pages (unsigned long address,
 	dir = pgd_offset_k(address);
 	spin_lock(&init_mm.page_table_lock);
 	do {
+	        pgd_t olddir = *dir;
 		pmd_t *pmd;
 		
 		pmd = pmd_alloc(&init_mm, dir, address);
@@ -174,6 +175,9 @@ static inline int __vmalloc_area_pages (unsigned long address,
 		if (alloc_area_pmd(pmd, address, end - address, gfp_mask, prot, pages))
 			goto err;	// The kernel NEVER reclaims pmds, so no need to undo pmd_alloc() here
 
+		if (pgd_val(olddir) != pgd_val(*dir))
+		    set_pgdir(address,*dir);
+		
 		address = (address + PGDIR_SIZE) & PGDIR_MASK;
 		dir++;
 	} while (address && (address < end));

@@ -6,6 +6,7 @@
 extern unsigned long event;
 
 #include <linux/config.h>
+#include <linux/ipipe.h>
 #include <linux/binfmts.h>
 #include <linux/threads.h>
 #include <linux/kernel.h>
@@ -91,6 +92,11 @@ extern int last_pid;
 #define TASK_UNINTERRUPTIBLE	2
 #define TASK_ZOMBIE		4
 #define TASK_STOPPED		8
+#ifdef CONFIG_IPIPE
+#define TASK_NOWAKEUP          1024
+#else  /* !CONFIG_IPIPE */
+#define TASK_NOWAKEUP          0
+#endif /* CONFIG_IPIPE */
 
 #define __set_task_state(tsk, state_value)		\
 	do { (tsk)->state = (state_value); } while (0)
@@ -415,6 +421,10 @@ struct task_struct {
 
 /* journalling filesystem info */
 	void *journal_info;
+
+#ifdef CONFIG_IPIPE
+        void *ptd[IPIPE_ROOT_NPTDKEYS];
+#endif    
 };
 
 /*
@@ -435,6 +445,11 @@ struct task_struct {
 #define PF_FSTRANS	0x00008000	/* inside a filesystem transaction */
 
 #define PF_USEDFPU	0x00100000	/* task used FPU this quantum (SMP) */
+#ifdef CONFIG_IPIPE
+#define PF_EVNOTIFY    0x40000000	/* Notify other domains about internal events */
+#else
+#define PF_EVNOTIFY    0
+#endif /* CONFIG_IPIPE */
 
 /*
  * Ptrace flags

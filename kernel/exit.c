@@ -439,6 +439,7 @@ fake_volatile:
 #ifdef CONFIG_BSD_PROCESS_ACCT
 	acct_process(code);
 #endif
+ 	ipipe_exit_notify(tsk);
 	__exit_mm(tsk);
 
 	lock_kernel();

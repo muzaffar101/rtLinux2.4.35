@@ -409,7 +409,88 @@ static void emit_log_char(char c)
  * then changes console_loglevel may break. This is because console_loglevel
  * is inspected when the actual printing occurs.
  */
+#ifdef CONFIG_IPIPE
+
+static ipipe_spinlock_t __ipipe_printk_lock = IPIPE_SPIN_LOCK_UNLOCKED;
+
+static int __ipipe_printk_fill;
+
+static char __ipipe_printk_buf[LOG_BUF_LEN];
+
+static int do_printk(const char *fmt, ...);
+
+void __ipipe_flush_printk (unsigned virq, void *cookie)
+{
+	char *p = __ipipe_printk_buf;
+	int len, lmax, out = 0;
+	unsigned long flags;
+
+	goto start;
+
+	do {
+		spin_unlock_irqrestore_hw(&__ipipe_printk_lock,flags);
+ start:
+		lmax = __ipipe_printk_fill;
+		while (out < lmax) {
+			len = strlen(p) + 1;
+			do_printk("%s",p);
+			p += len;
+			out += len;
+		}
+		spin_lock_irqsave_hw(&__ipipe_printk_lock,flags);
+	}
+	while (__ipipe_printk_fill != lmax);
+
+	__ipipe_printk_fill = 0;
+
+	spin_unlock_irqrestore_hw(&__ipipe_printk_lock,flags);
+}
+
+int vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
+{
+	int i = vsnprintf(buf,size,fmt,args);
+	return (i >= size) ? (size - 1) : i;
+}
+
 asmlinkage int printk(const char *fmt, ...)
+{
+    	unsigned long flags, oldcount;
+	int r, fbytes;
+	va_list args;
+
+	va_start(args, fmt);
+
+	spin_lock_irqsave_hw(&__ipipe_printk_lock,flags);
+
+	oldcount = __ipipe_printk_fill;
+	fbytes = LOG_BUF_LEN - __ipipe_printk_fill;
+
+	if (fbytes > 1)	{
+		r = vscnprintf(__ipipe_printk_buf + __ipipe_printk_fill,
+			       fbytes, fmt, args) + 1; /* account for the null byte */
+		__ipipe_printk_fill += r;
+	} else
+		r = 0;
+
+	spin_unlock_irqrestore_hw(&__ipipe_printk_lock,flags);
+
+	if (ipipe_current_domain == ipipe_root_domain ||
+	    test_bit(IPIPE_SPRINTK_FLAG,&ipipe_current_domain->flags) ||
+	    oops_in_progress) {
+		__ipipe_flush_printk(__ipipe_printk_virq, NULL);
+	}
+	else if (oldcount == 0)
+	    	ipipe_trigger_irq(__ipipe_printk_virq);
+
+	va_end(args);
+
+	return r;
+}
+
+static int do_printk(const char *fmt, ...)
+#else /* !CONFIG_IPIPE */
+asmlinkage int printk(const char *fmt, ...)
+#endif /* CONFIG_IPIPE */
 {
 	va_list args;
 	unsigned long flags;

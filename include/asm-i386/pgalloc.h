@@ -235,4 +235,40 @@ static inline void flush_tlb_pgtables(struct mm_struct *mm,
 	flush_tlb_mm(mm);
 }
 
+/* Non-root Ipipe domains cannot might not cope with on-demand
+   mappings for I/O or vmalloc'ed memory, so fall back to a brute
+   force instantaneous kernel global mapping of these areas. */
+
+static inline void set_pgdir(unsigned long address, pgd_t entry)
+{
+#ifdef CONFIG_IPIPE
+	struct task_struct *p;
+	pgd_t *pgd;
+
+	read_lock(&tasklist_lock);
+	for_each_task(p) {
+		if (!p->mm)
+			continue;
+		*pgd_offset(p->mm,address) = entry;
+	}
+	read_unlock(&tasklist_lock);
+#ifdef CONFIG_SMP
+	{
+	int cpu;
+	/* To pgd_alloc/pgd_free, one holds the page table lock and so
+	   does our callee, so we can modify pgd caches of other CPUs
+	   as well. -jj +rpm*/
+	for (cpu = 0; cpu < NR_CPUS; cpu++)
+		for (pgd = (pgd_t *)cpu_data[cpu].pgd_quick; pgd; pgd = (pgd_t *)*(unsigned long *)pgd)
+			pgd[address >> PGDIR_SHIFT] = entry;
+	}
+#else /* !CONFIG_SMP */
+	for (pgd = (pgd_t *)pgd_quicklist; pgd; pgd = (pgd_t *)*(unsigned long *)pgd)
+	       pgd[address >> PGDIR_SHIFT] = entry;
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_IPIPE */
+}
+
+
+
 #endif /* _I386_PGALLOC_H */

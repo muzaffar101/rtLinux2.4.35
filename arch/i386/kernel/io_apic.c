@@ -151,18 +151,20 @@ static void mask_IO_APIC_irq (unsigned int irq)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
+	ipipe_irq_lock(irq);
 	__mask_IO_APIC_irq(irq);
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 }
 
 static void unmask_IO_APIC_irq (unsigned int irq)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
+	ipipe_irq_unlock(irq);
 	__unmask_IO_APIC_irq(irq);
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 }
 
 void clear_IO_APIC_pin(unsigned int apic, unsigned int pin)
@@ -171,10 +173,10 @@ void clear_IO_APIC_pin(unsigned int apic, unsigned int pin)
 	unsigned long flags;
 	
 	/* Check delivery_mode to be sure we're not clearing an SMI pin */
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	*(((int*)&entry) + 0) = io_apic_read(apic, 0x10 + 2 * pin);
 	*(((int*)&entry) + 1) = io_apic_read(apic, 0x11 + 2 * pin);
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 	if (entry.delivery_mode == dest_SMI)
 		return;
 
@@ -183,10 +185,10 @@ void clear_IO_APIC_pin(unsigned int apic, unsigned int pin)
 	 */
 	memset(&entry, 0, sizeof(entry));
 	entry.mask = 1;
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	io_apic_write(apic, 0x10 + 2 * pin, *(((int *)&entry) + 0));
 	io_apic_write(apic, 0x11 + 2 * pin, *(((int *)&entry) + 1));
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 }
 
 static void clear_IO_APIC (void)
@@ -691,10 +693,10 @@ void __init setup_IO_APIC_irqs(void)
 			if (!apic && (irq < 16))
 				disable_8259A_irq(irq);
 		}
-		spin_lock_irqsave(&ioapic_lock, flags);
+		spin_lock_irqsave_hw(&ioapic_lock, flags);
 		io_apic_write(apic, 0x11+2*pin, *(((int *)&entry)+1));
 		io_apic_write(apic, 0x10+2*pin, *(((int *)&entry)+0));
-		spin_unlock_irqrestore(&ioapic_lock, flags);
+		spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 	}
 	}
 
@@ -739,10 +741,10 @@ void __init setup_ExtINT_IRQ0_pin(unsigned int pin, int vector)
 	/*
 	 * Add it to the IO-APIC irq-routing table:
 	 */
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	io_apic_write(0, 0x11+2*pin, *(((int *)&entry)+1));
 	io_apic_write(0, 0x10+2*pin, *(((int *)&entry)+0));
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 
 	enable_8259A_irq(0);
 }
@@ -1007,7 +1009,7 @@ void /*__init*/ print_PIC(void)
 
 	printk(KERN_DEBUG "\nprinting PIC contents\n");
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 
 	v = inb(0xa1) << 8 | inb(0x21);
 	printk(KERN_DEBUG "... PIC  IMR: %04x\n", v);
@@ -1021,7 +1023,7 @@ void /*__init*/ print_PIC(void)
 	outb(0x0a,0xa0);
 	outb(0x0a,0x20);
 
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 
 	printk(KERN_DEBUG "... PIC  ISR: %04x\n", v);
 
@@ -1231,14 +1233,15 @@ static unsigned int startup_edge_ioapic_irq(unsigned int irq)
 	int was_pending = 0;
 	unsigned long flags;
 
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	if (irq < 16) {
 		disable_8259A_irq(irq);
 		if (i8259A_irq_pending(irq))
 			was_pending = 1;
 	}
 	__unmask_IO_APIC_irq(irq);
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	ipipe_irq_unlock(irq);	
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 
 	return was_pending;
 }
@@ -1250,6 +1253,24 @@ static unsigned int startup_edge_ioapic_irq(unsigned int irq)
  * interrupt for real. This prevents IRQ storms from unhandled
  * devices.
  */
+#if CONFIG_IPIPE
+
+static void ack_edge_ioapic_irq (unsigned int irq)
+
+{
+    if ((irq_desc[irq].status & (IRQ_PENDING | IRQ_DISABLED))
+					== (IRQ_PENDING | IRQ_DISABLED)) {
+	unsigned long flags;
+	spin_lock_irqsave_hw(&ioapic_lock,flags);
+	__mask_IO_APIC_irq(irq);
+	spin_unlock_irqrestore_hw(&ioapic_lock,flags);
+    }
+
+    __ack_APIC_irq();
+}
+
+#else /* !CONFIG_IPIPE */
+
 static void ack_edge_ioapic_irq(unsigned int irq)
 {
 	if ((irq_desc[irq].status & (IRQ_PENDING | IRQ_DISABLED))
@@ -1257,6 +1278,8 @@ static void ack_edge_ioapic_irq(unsigned int irq)
 		mask_IO_APIC_irq(irq);
 	ack_APIC_irq();
 }
+
+#endif /* CONFIG_IPIPE */
 
 static void end_edge_ioapic_irq (unsigned int i) { /* nothing */ }
 
@@ -1285,6 +1308,58 @@ static unsigned int startup_level_ioapic_irq (unsigned int irq)
 #define shutdown_level_ioapic_irq	mask_IO_APIC_irq
 #define enable_level_ioapic_irq		unmask_IO_APIC_irq
 #define disable_level_ioapic_irq	mask_IO_APIC_irq
+
+#ifdef CONFIG_IPIPE
+
+/* Prevent low priority IRQs grabbed by high priority domains from
+   being delayed, waiting for a high priority interrupt handler
+   running in a low priority domain to complete. */
+
+static unsigned long bugous_edge_triggers;
+
+static void end_level_ioapic_irq (unsigned irq)
+
+{
+	unsigned long flags;
+
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
+
+	if (test_and_clear_bit(irq,&bugous_edge_triggers)) {
+		atomic_inc(&irq_mis_count);
+		__unmask_and_level_IO_APIC_irq(irq);
+	}
+	else
+		__unmask_IO_APIC_irq(irq);
+
+	ipipe_irq_unlock(irq);
+
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
+}
+
+static void mask_and_ack_level_ioapic_irq (unsigned irq)
+
+{
+	unsigned long flags, v;
+	int i;
+
+	i = IO_APIC_VECTOR(irq);
+	v = apic_read(APIC_TMR + ((i & ~0x1f) >> 1));
+
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
+
+	if (!(v & (1 << (i & 0x1f)))) {
+		set_bit(irq,&bugous_edge_triggers);
+		__mask_and_edge_IO_APIC_irq(irq);
+	}
+	else
+		__mask_IO_APIC_irq(irq);
+
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
+
+	__ack_APIC_irq();
+}
+
+#else /* !CONFIG_IPIPE */
 
 static void end_level_ioapic_irq (unsigned int irq)
 {
@@ -1347,6 +1422,8 @@ static void end_level_ioapic_irq (unsigned int irq)
 
 static void mask_and_ack_level_ioapic_irq (unsigned int irq) { /* nothing */ }
 
+#endif /* CONFIG_IPIPE */
+
 #ifndef CONFIG_SMP
 
 void fastcall send_IPI_self(int vector)
@@ -1381,9 +1458,9 @@ static void set_ioapic_affinity (unsigned int irq, unsigned long mask)
 	 */
 	mask = mask << 24;
 
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	__DO_ACTION(1, = mask, )
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 }
 
 /*
@@ -1466,7 +1543,7 @@ static void disable_lapic_irq (unsigned int irq)
 
 static void ack_lapic_irq (unsigned int irq)
 {
-	ack_APIC_irq();
+	__ack_APIC_irq();
 }
 
 static void end_lapic_irq (unsigned int i) { /* nothing */ }
@@ -1883,10 +1960,10 @@ int io_apic_set_pci_routing (int ioapic, int pin, int irq, int edge_level, int a
 	if (!ioapic && (irq < 16))
 		disable_8259A_irq(irq);
 
-	spin_lock_irqsave(&ioapic_lock, flags);
+	spin_lock_irqsave_hw(&ioapic_lock, flags);
 	io_apic_write(ioapic, 0x11+2*pin, *(((int *)&entry)+1));
 	io_apic_write(ioapic, 0x10+2*pin, *(((int *)&entry)+0));
-	spin_unlock_irqrestore(&ioapic_lock, flags);
+	spin_unlock_irqrestore_hw(&ioapic_lock, flags);
 
 	return 0;
 }

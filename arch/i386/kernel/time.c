@@ -167,6 +167,10 @@ static unsigned long do_slow_gettimeoffset(void)
 	 */
 	unsigned long jiffies_t;
 
+#ifdef CONFIG_IPIPE
+	if (!__ipipe_pipeline_head_p(ipipe_root_domain))
+		return 0;	/* We don't really own the PIT. */
+#endif /* CONFIG_IPIPE */
 	/* gets recalled with irq locally disabled */
 	spin_lock(&i8253_lock);
 	/* timer count may underflow right here */
@@ -210,14 +214,15 @@ static unsigned long do_slow_gettimeoffset(void)
 			/* the nutcase */
 
 			int i;
+			unsigned long flags;
+			spin_lock_irqsave_hw_cond(&i8259A_lock,flags);			
 
-			spin_lock(&i8259A_lock);
 			/*
 			 * This is tricky when I/O APICs are used;
 			 * see do_timer_interrupt().
 			 */
 			i = inb(0x20);
-			spin_unlock(&i8259A_lock);
+			spin_unlock_irqrestore_hw_cond(&i8259A_lock,flags);
 
 			/* assumption about timer being IRQ0 */
 			if (i & 0x01) {
@@ -281,6 +286,10 @@ static inline void mark_timeoffset_cyclone(void)
 	int count;
 	unsigned long lost;
 	unsigned long delta = last_cyclone_timer;
+#ifdef CONFIG_IPIPE
+	if (!__ipipe_pipeline_head_p(ipipe_root_domain))
+		return;	/* We don't really own the PIT. */
+#endif /* CONFIG_IPIPE */
 	spin_lock(&i8253_lock);
 	/* quickly read the cyclone timer */
 	if(cyclone_timer)
@@ -309,6 +318,10 @@ static unsigned long do_gettimeoffset_cyclone(void)
 {
 	u32 offset;
 
+#ifdef CONFIG_IPIPE
+	if (!__ipipe_pipeline_head_p(ipipe_root_domain))
+		return 0;
+#endif /* CONFIG_IPIPE */
 	if(!cyclone_timer)
 		return delay_at_last_interrupt;
 
@@ -577,14 +590,15 @@ static inline void do_timer_interrupt(int irq, void *dev_id, struct pt_regs *reg
 		 * This will also deassert NMI lines for the watchdog if run
 		 * on an 82489DX-based system.
 		 */
-		spin_lock(&i8259A_lock);
+		unsigned long flags;
+		spin_lock_irqsave_hw_cond(&i8259A_lock,flags);
 		outb(0x0c, 0x20);
 		/* Ack the IRQ; AEOI will end it automatically. */
 		inb(0x20);
-		spin_unlock(&i8259A_lock);
+		spin_unlock_irqrestore_hw_cond(&i8259A_lock,flags);
 	}
 #endif
-
+	
 #ifdef CONFIG_VISWS
 	/* Clear the interrupt */
 	co_cpu_write(CO_CPU_STAT,co_cpu_read(CO_CPU_STAT) & ~CO_STAT_TIMEINTR);
@@ -644,8 +658,10 @@ static int use_tsc;
  */
 static void timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
+#ifndef CONFIG_IPIPE    
 	int count;
-
+#endif /* CONFIG_IPIPE */
+	
 	/*
 	 * Here we are in the timer irq handler. We just have irqs locally
 	 * disabled but we don't know if the timer_bh is running on the other
@@ -674,6 +690,7 @@ static void timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 
 		rdtscl(last_tsc_low);
 
+#ifndef CONFIG_IPIPE		
 		spin_lock(&i8253_lock);
 		outb_p(0x00, 0x43);     /* latch the count ASAP */
 
@@ -705,6 +722,8 @@ static void timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 
 		count = ((LATCH-1) - count) * TICK_SIZE;
 		delay_at_last_interrupt = (count + LATCH/2) / LATCH;
+		
+#endif /* CONFIG_IPIPE */		
 	}
 
 	do_timer_interrupt(irq, NULL, regs);

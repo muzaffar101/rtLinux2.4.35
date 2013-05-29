@@ -1111,6 +1111,9 @@ unsigned int apic_timer_irqs [NR_CPUS];
 void smp_apic_timer_interrupt(struct pt_regs * regs)
 {
 	int cpu = smp_processor_id();
+#ifdef CONFIG_IPIPE
+	regs =  __ipipe_tick_regs + cpu;
+#endif /* CONFIG_IPIPE */
 
 	/*
 	 * the NMI deadlock-detector uses this.
@@ -1149,7 +1152,7 @@ asmlinkage void smp_spurious_interrupt(void)
 	 */
 	v = apic_read(APIC_ISR + ((SPURIOUS_APIC_VECTOR & ~0x1f) >> 1));
 	if (v & (1 << (SPURIOUS_APIC_VECTOR & 0x1f)))
-		ack_APIC_irq();
+		__ack_APIC_irq();
 
 	/* see sw-dev-man vol 3, chapter 7.4.13.5 */
 	printk(KERN_INFO "spurious APIC interrupt on CPU#%d, should never happen.\n",

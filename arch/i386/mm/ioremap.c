@@ -81,6 +81,7 @@ static int remap_area_pages(unsigned long address, unsigned long phys_addr,
 		if (remap_area_pmd(pmd, address, end - address,
 					 phys_addr + address, flags))
 			break;
+		set_pgdir(address, *dir);		
 		error = 0;
 		address = (address + PGDIR_SIZE) & PGDIR_MASK;
 		dir++;

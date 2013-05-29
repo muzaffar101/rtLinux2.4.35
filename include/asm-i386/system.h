@@ -12,7 +12,10 @@
 struct task_struct;	/* one of the stranger aspects of C forward declarations.. */
 extern void FASTCALL(__switch_to(struct task_struct *prev, struct task_struct *next));
 
-#define prepare_to_switch()	do { } while(0)
+#ifndef CONFIG_IPIPE
+#define prepare_to_switch(next)	do { } while(0)
+#endif /* CONFIG_IPIPE */
+
 #define switch_to(prev,next,last) do {					\
 	asm volatile("pushl %%esi\n\t"					\
 		     "pushl %%edi\n\t"					\
@@ -313,6 +316,51 @@ static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
 #define set_wmb(var, value) do { var = value; wmb(); } while (0)
 
 /* interrupt control.. */
+#ifdef CONFIG_IPIPE
+
+#include <linux/linkage.h>
+
+void __ipipe_stall_root(void);
+void __ipipe_unstall_root(void);
+unsigned long __ipipe_test_root(void);
+unsigned long __ipipe_test_and_stall_root(void);
+void FASTCALL(__ipipe_restore_root(unsigned long flags));
+
+#define __save_flags(x)         ((x) = (!__ipipe_test_root()) << 9)
+#define __restore_flags(x) 	__ipipe_restore_root(!(x & 0x200))
+#define __cli() 		__ipipe_stall_root()
+#define __sti()			__ipipe_unstall_root()
+
+#define safe_halt() do { \
+    __ipipe_unstall_root(); \
+    __asm__ __volatile__("sti; hlt": : :"memory"); \
+} while(0)
+
+#define __save_and_cli(x)	do { __save_flags(x); __cli(); } while(0);
+#define __save_and_sti(x)	do { __save_flags(x); __sti(); } while(0);
+
+#define local_irq_save(x)	__save_and_cli(x)
+#define local_irq_set(x)	__save_and_sti(x)
+
+#define local_irq_restore(x)	__restore_flags(x)
+#define local_irq_disable()	__cli()
+#define local_irq_enable()	__sti()
+
+#define local_irq_disable_hw()	__asm__ __volatile__("cli": : :"memory")
+#define local_irq_enable_hw()	__asm__ __volatile__("sti": : :"memory")
+#define local_irq_save_hw(x)    __asm__ __volatile__("pushfl ; popl %0 ; cli":"=g" (x): /* no input */ :"memory")
+#define local_irq_restore_hw(x) __asm__ __volatile__("pushl %0 ; popfl": /* no output */ :"g" (x):"memory", "cc")
+#define local_save_flags_hw(x)   __asm__ __volatile__("pushfl ; popl %0":"=g" (x): /* no input */)
+#define local_test_iflag_hw(x)   ((x) & (1<<9))
+#define irqs_disabled_hw()	\
+({					\
+	unsigned long flags;		\
+	local_save_flags_hw(flags);	\
+	!local_test_iflag_hw(flags);	\
+})
+
+#else /* !CONFIG_IPIPE */
+
 #define __save_flags(x)		__asm__ __volatile__("pushfl ; popl %0":"=g" (x): /* no input */)
 #define __restore_flags(x) 	__asm__ __volatile__("pushl %0 ; popfl": /* no output */ :"g" (x):"memory", "cc")
 #define __cli() 		__asm__ __volatile__("cli": : :"memory")
@@ -335,6 +383,13 @@ static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
 #define local_irq_restore(x)	__restore_flags(x)
 #define local_irq_disable()	__cli()
 #define local_irq_enable()	__sti()
+
+#define local_irq_save_hw(flags)	local_irq_save(flags)
+#define local_irq_restore_hw(flags)	local_irq_restore(flags)
+#define local_irq_enable_hw()		local_irq_enable()
+#define local_irq_disable_hw(flags)	local_irq_disable()
+
+#endif /* CONFIG_IPIPE */
 
 #ifdef CONFIG_SMP
 

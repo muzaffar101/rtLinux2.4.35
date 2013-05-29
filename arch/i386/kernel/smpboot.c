@@ -776,6 +776,7 @@ static void __init do_boot_cpu (int apicid)
 	unsigned short nmi_high = 0, nmi_low = 0;
 
 	cpu = ++cpucount;
+	ipipe_note_apicid(apicid,cpu);
 	/*
 	 * We can't use kernel_thread since we must avoid to
 	 * reschedule the child.
@@ -1012,6 +1013,7 @@ void __init smp_boot_cpus(void)
 	else
 		boot_cpu_logical_apicid = logical_smp_processor_id();
 	map_cpu_to_boot_apicid(0, boot_cpu_apicid);
+	ipipe_note_apicid(boot_cpu_physical_apicid,0);
 
 	global_irq_holder = 0;
 	current->processor = 0;

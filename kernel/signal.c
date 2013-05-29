@@ -506,7 +506,8 @@ static int send_signal(int sig, struct siginfo *info, struct sigpending *signals
 static inline void signal_wake_up(struct task_struct *t)
 {
 	t->sigpending = 1;
-
+	ipipe_sigwake_notify(t); /* sigpending must be set first. */
+	
 #ifdef CONFIG_SMP
 	/*
 	 * If the task is running on a different CPU 

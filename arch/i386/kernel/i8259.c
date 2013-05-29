@@ -53,7 +53,7 @@ BUILD_COMMON_IRQ()
  */
 BUILD_16_IRQS(0x0)
 
-#ifdef CONFIG_X86_IO_APIC
+#if defined(CONFIG_X86_IO_APIC) || (defined(CONFIG_IPIPE) && defined(CONFIG_X86_LOCAL_APIC))
 /*
  * The IO-APIC gives us many more interrupt sources. Most of these 
  * are unused but an SMP system is supposed to have enough memory ...
@@ -107,10 +107,10 @@ BUILD_SMP_INTERRUPT(spurious_interrupt,SPURIOUS_APIC_VECTOR)
 	IRQ(x,8), IRQ(x,9), IRQ(x,a), IRQ(x,b), \
 	IRQ(x,c), IRQ(x,d), IRQ(x,e), IRQ(x,f)
 
-void (*interrupt[NR_IRQS])(void) = {
+void (*interrupt[NR_XIRQS])(void) = {
 	IRQLIST_16(0x0),
 
-#ifdef CONFIG_X86_IO_APIC
+#if defined(CONFIG_X86_IO_APIC) || (defined(CONFIG_IPIPE) && defined(CONFIG_X86_LOCAL_APIC))
 			 IRQLIST_16(0x1), IRQLIST_16(0x2), IRQLIST_16(0x3),
 	IRQLIST_16(0x4), IRQLIST_16(0x5), IRQLIST_16(0x6), IRQLIST_16(0x7),
 	IRQLIST_16(0x8), IRQLIST_16(0x9), IRQLIST_16(0xa), IRQLIST_16(0xb),
@@ -188,13 +188,13 @@ void disable_8259A_irq(unsigned int irq)
 	unsigned int mask = 1 << irq;
 	unsigned long flags;
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 	cached_irq_mask |= mask;
 	if (irq & 8)
 		outb(cached_A1,0xA1);
 	else
 		outb(cached_21,0x21);
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 }
 
 void enable_8259A_irq(unsigned int irq)
@@ -202,13 +202,14 @@ void enable_8259A_irq(unsigned int irq)
 	unsigned int mask = ~(1 << irq);
 	unsigned long flags;
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 	cached_irq_mask &= mask;
 	if (irq & 8)
 		outb(cached_A1,0xA1);
 	else
 		outb(cached_21,0x21);
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	ipipe_irq_unlock(irq);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 }
 
 int i8259A_irq_pending(unsigned int irq)
@@ -217,12 +218,12 @@ int i8259A_irq_pending(unsigned int irq)
 	unsigned long flags;
 	int ret;
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 	if (irq < 8)
 		ret = inb(0x20) & mask;
 	else
 		ret = inb(0xA0) & (mask >> 8);
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 
 	return ret;
 }
@@ -269,7 +270,7 @@ void mask_and_ack_8259A(unsigned int irq)
 	unsigned int irqmask = 1 << irq;
 	unsigned long flags;
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 	/*
 	 * Lightweight spurious IRQ detection. We do not want
 	 * to overdo spurious IRQ handling - it's usually a sign
@@ -287,6 +288,15 @@ void mask_and_ack_8259A(unsigned int irq)
 	 */
 	if (cached_irq_mask & irqmask)
 		goto spurious_8259A_irq;
+#ifdef CONFIG_IPIPE
+	if (irq == 0) {
+	    /* Fast timer ack -- don't mask (unless supposedly
+	      spurious) */
+	    outb(0x20,0x20);
+	    spin_unlock_irqrestore_hw(&i8259A_lock, flags);
+	    return;
+	}
+#endif /* CONFIG_IPIPE */	
 	cached_irq_mask |= irqmask;
 
 handle_real_irq:
@@ -300,7 +310,7 @@ handle_real_irq:
 		outb(cached_21,0x21);
 		outb(0x60+irq,0x20);	/* 'Specific EOI' to master */
 	}
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 	return;
 
 spurious_8259A_irq:
@@ -338,7 +348,7 @@ void __init init_8259A(int auto_eoi)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&i8259A_lock, flags);
+	spin_lock_irqsave_hw(&i8259A_lock, flags);
 
 	outb(0xff, 0x21);	/* mask all of 8259A-1 */
 	outb(0xff, 0xA1);	/* mask all of 8259A-2 */
@@ -374,7 +384,7 @@ void __init init_8259A(int auto_eoi)
 	outb(cached_21, 0x21);	/* restore master IRQ mask */
 	outb(cached_A1, 0xA1);	/* restore slave IRQ mask */
 
-	spin_unlock_irqrestore(&i8259A_lock, flags);
+	spin_unlock_irqrestore_hw(&i8259A_lock, flags);
 }
 
 /*
@@ -455,7 +465,7 @@ void __init init_IRQ(void)
 	 * us. (some of these will be overridden and become
 	 * 'special' SMP interrupts)
 	 */
-	for (i = 0; i < NR_IRQS; i++) {
+	for (i = 0; i < NR_XIRQS; i++) {
 		int vector = FIRST_EXTERNAL_VECTOR + i;
 		if (vector != SYSCALL_VECTOR) 
 			set_intr_gate(vector, interrupt[i]);

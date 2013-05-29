@@ -102,7 +102,7 @@ static void ack_none(unsigned int irq)
 	 * unexpected vectors occur) that might lock up the APIC
 	 * completely.
 	 */
-	ack_APIC_irq();
+	__ack_APIC_irq();
 #endif
 #endif
 }
@@ -444,6 +444,15 @@ int handle_IRQ_event(unsigned int irq, struct pt_regs * regs, struct irqaction *
 
 	status = 1;	/* Force the "do bottom halves" bit */
 
+#ifdef CONFIG_IPIPE
+	/* If processing a timer tick, pass the original regs as
+	   collected during preemption and not our phony - always
+	   kernel-originated - frame, so that we don't wreck the
+	   profiling code. */
+	if (__ipipe_tick_irq == irq)
+		regs = __ipipe_tick_regs + smp_processor_id();
+#endif /* CONFIG_IPIPE */
+	
 	if (!(action->flags & SA_INTERRUPT))
 		__sti();
 
@@ -595,7 +604,10 @@ asmlinkage unsigned int do_IRQ(struct pt_regs regs)
 
 	kstat.irqs[cpu][irq]++;
 	spin_lock(&desc->lock);
+#ifndef CONFIG_IPIPE	
 	desc->handler->ack(irq);
+#endif /* CONFIG_IPIPE */
+	
 	/*
 	   REPLAY is when Linux resends an IRQ that was dropped earlier
 	   WAITING is used by probe to mark irqs that are being tested
@@ -1213,3 +1225,27 @@ void init_irq_proc (void)
 		register_irq_proc(i);
 }
 
+#if defined(CONFIG_IPIPE) && defined(CONFIG_SMP)
+
+cpumask_t __ipipe_set_irq_affinity (unsigned irq, cpumask_t cpumask)
+
+{
+	cpumask_t oldmask = irq_affinity[irq];
+
+	if (irq_desc[irq].handler->set_affinity == NULL)
+		return CPU_MASK_NONE;
+
+	if (cpus_empty(cpumask))
+		return oldmask; /* Return mask value -- no change. */
+
+	cpus_and(cpumask,cpumask,cpu_online_map);
+
+	if (cpus_empty(cpumask))
+		return CPU_MASK_NONE;	/* Error -- bad mask value or non-routable IRQ. */
+
+	irq_affinity[irq] = cpumask;
+	irq_desc[irq].handler->set_affinity(irq,cpumask);
+	return oldmask;
+}
+
+#endif /* CONFIG_IPIPE && CONFIG_SMP */

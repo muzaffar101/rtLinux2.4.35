@@ -29,6 +29,7 @@ unsigned int nmi_watchdog = NMI_NONE;
 static unsigned int nmi_hz = HZ;
 unsigned int nmi_perfctr_msr;	/* the MSR to reset in NMI handler */
 extern void show_registers(struct pt_regs *regs);
+static void default_nmi_watchdog_tick (struct pt_regs * regs);
 
 #define K7_EVNTSEL_ENABLE	(1 << 22)
 #define K7_EVNTSEL_INT		(1 << 20)
@@ -109,6 +110,7 @@ static int __init setup_nmi_watchdog(char *str)
 
 	if (nmi >= NMI_INVALID)
 		return 0;
+        nmi_watchdog_tick = default_nmi_watchdog_tick;
 	if (nmi == NMI_NONE)
 		nmi_watchdog = nmi;
 	/*
@@ -304,7 +306,7 @@ void __pminit setup_apic_nmi_watchdog (void)
 	nmi_pm_init();
 }
 
-static spinlock_t nmi_print_lock = SPIN_LOCK_UNLOCKED;
+spinlock_t nmi_print_lock = SPIN_LOCK_UNLOCKED;
 
 /*
  * the best way to detect whether a CPU has a 'hard lockup' problem
@@ -337,7 +339,7 @@ void touch_nmi_watchdog (void)
 		alert_counter[i] = 0;
 }
 
-void nmi_watchdog_tick (struct pt_regs * regs)
+static void default_nmi_watchdog_tick (struct pt_regs * regs)
 {
 
 	/*

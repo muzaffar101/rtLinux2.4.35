@@ -948,3 +948,9 @@ CONFIG_LOG_BUF_SHIFT=0
 CONFIG_CRC32=y
 # CONFIG_ZLIB_INFLATE is not set
 # CONFIG_ZLIB_DEFLATE is not set
+
+#
+# Interrupt pipeline
+#
+CONFIG_IPIPE=y
+# CONFIG_IPIPE_STATS is not set

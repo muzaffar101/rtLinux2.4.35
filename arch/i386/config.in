@@ -272,6 +272,7 @@ endmenu
 mainmenu_option next_comment
 comment 'General setup'
 
+bool 'Interrupt pipeline' CONFIG_IPIPE
 bool 'Networking support' CONFIG_NET
 
 # Visual Workstation support is utterly broken.

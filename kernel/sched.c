@@ -355,6 +355,8 @@ static inline int try_to_wake_up(struct task_struct * p, int synchronous)
 	 * We want the common case fall through straight, thus the goto.
 	 */
 	spin_lock_irqsave(&runqueue_lock, flags);
+	if (p->state & TASK_NOWAKEUP)
+		goto out;
 	p->state = TASK_RUNNING;
 	if (task_on_runqueue(p))
 		goto out;
@@ -531,7 +533,57 @@ needs_resched:
 
 asmlinkage void schedule_tail(struct task_struct *prev)
 {
+#ifdef CONFIG_IPIPE
+	local_irq_disable();
+	local_irq_enable_hw();
+#endif /* CONFIG_IPIPE */
 	__schedule_tail(prev);
+	ipipe_init_notify(current);
+#ifdef CONFIG_IPIPE
+	local_irq_enable();
+#endif /* CONFIG_IPIPE */
+}
+
+static struct delayed_mmreq {
+	int in;
+	int out;
+	int count;
+#define MAX_DELAYED_MM  32  /* need ^2 here. */
+	struct mm_struct *mm[MAX_DELAYED_MM];
+} delayed_mmtab[NR_CPUS];
+
+static void __ipipe_delay_mmdrop (struct task_struct *prev)
+{
+    	if (!prev->mm) {
+		struct delayed_mmreq *p = delayed_mmtab + prev->processor;
+		struct mm_struct *oldmm = prev->active_mm;
+		BUG_ON(p->count >= MAX_DELAYED_MM);
+		/*
+		 * Prevent the mm from being dropped in schedule()
+		 * since this could cause 1) large latencies to high
+		 * priority domains hijacking Linux tasks, 2) subtle
+		 * mm recycling error at task exit due to
+		 * co-scheduling issues, then pend a request to drop
+		 * it later in __ipipe_mmdrop_sync() when Linux is
+		 * back in control.
+		 */
+		atomic_inc(&oldmm->mm_count);
+		p->mm[p->in] = oldmm;
+		p->in = (p->in + 1) & (MAX_DELAYED_MM - 1);
+		p->count++;
+	}
+}
+
+static void __ipipe_sync_mmdrop (void)
+{
+    	struct delayed_mmreq *p = delayed_mmtab + smp_processor_id();
+
+	while (p->out != p->in) {
+		struct mm_struct *oldmm = p->mm[p->out];
+		mmdrop(oldmm);
+		p->out = (p->out + 1) & (MAX_DELAYED_MM - 1);
+		p->count--;
+	}
 }
 
 /*
@@ -668,7 +720,8 @@ repeat_schedule:
 	 * but prev is set to (the just run) 'last' process by switch_to().
 	 * This might sound slightly confusing but makes tons of sense.
 	 */
-	prepare_to_switch();
+	prepare_to_switch(next);
+	__ipipe_delay_mmdrop(prev);
 	{
 		struct mm_struct *mm = next->mm;
 		struct mm_struct *oldmm = prev->active_mm;
@@ -693,6 +746,9 @@ repeat_schedule:
 	 * stack.
 	 */
 	switch_to(prev, next, prev);
+	if (task_hijacked(prev))
+	    return;
+	__ipipe_sync_mmdrop();
 	__schedule_tail(prev);
 
 same_process:
@@ -991,6 +1047,7 @@ static int setscheduler(pid_t pid, int policy,
 	retval = 0;
 	p->policy = policy;
 	p->rt_priority = lp.sched_priority;
+	ipipe_setsched_notify(p);
 
 	current->need_resched = 1;
 
@@ -1395,3 +1452,34 @@ void __init sched_init(void)
 	atomic_inc(&init_mm.mm_count);
 	enter_lazy_tlb(&init_mm, current, cpu);
 }
+
+#ifdef CONFIG_IPIPE
+
+int ipipe_setscheduler_root (struct task_struct *p, int policy, int prio)
+{
+	read_lock_irq(&tasklist_lock);
+	spin_lock(&runqueue_lock);
+
+	p->policy = policy;
+	p->rt_priority = prio;
+	current->need_resched = 1;
+
+	spin_unlock(&runqueue_lock);
+	read_unlock_irq(&tasklist_lock);
+
+	return 0;
+}
+
+int ipipe_reenter_root (struct task_struct *prev, int policy, int prio)
+{
+    	__schedule_tail(prev);
+	reacquire_kernel_lock(current);
+	local_irq_enable();
+
+	if (current->policy != policy || current->rt_priority != prio)
+		return ipipe_setscheduler_root(current,policy,prio);
+
+	return 0;
+}
+
+#endif /* CONFIG_IPIPE */

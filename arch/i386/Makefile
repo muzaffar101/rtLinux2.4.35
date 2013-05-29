@@ -158,3 +158,8 @@ archmrproper:
 
 archdep:
 	@$(MAKEBOOT) dep
+
+ifdef CONFIG_XENOMAI
+SUBDIRS += arch/i386/xenomai
+DRIVERS += arch/i386/xenomai/built-in.o
+endif

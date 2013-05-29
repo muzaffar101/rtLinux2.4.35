@@ -50,7 +50,13 @@ static __inline__ void apic_wait_icr_idle(void)
 # define apic_write_around(x,y) apic_write_atomic((x),(y))
 #endif
 
+#ifdef CONFIG_IPIPE
+#define ack_APIC_irq() do { } while(0)
+static inline void __ack_APIC_irq(void)
+#else /* !CONFIG_IPIPE */
+#define __ack_APIC_irq() ack_APIC_irq()
 static inline void ack_APIC_irq(void)
+#endif /* CONFIG_IPIPE */
 {
 	/*
 	 * ack_APIC_irq() actually gets compiled as a single instruction:
@@ -77,7 +83,7 @@ extern void init_apic_mappings (void);
 extern void smp_local_timer_interrupt (struct pt_regs * regs);
 extern void setup_APIC_clocks (void);
 extern void setup_apic_nmi_watchdog (void);
-extern void nmi_watchdog_tick (struct pt_regs * regs);
+extern void (*nmi_watchdog_tick) (struct pt_regs * regs);
 extern int APIC_init_uniprocessor (void);
 extern void disable_APIC_timer(void);
 extern void enable_APIC_timer(void);

@@ -373,7 +373,10 @@ asmlinkage void __init start_kernel(void)
 	sched_init();
 	softirq_init();
 	time_init();
-
+	/* We need to wait for the interrupt and time subsystems to be
+	   initialized before enabling the pipeline. */
+ 	ipipe_init();
+	
 	/*
 	 * HACK ALERT! This is early. We're enabling the console before
 	 * we've done PCI setups etc, and console_init() must be aware of
@@ -494,6 +497,7 @@ static void __init do_basic_setup(void)
 #ifdef CONFIG_SYSCTL
 	sysctl_init();
 #endif
+	ipipe_init_proc();
 
 	/*
 	 * Ok, at this point all CPU's should be initialized, so

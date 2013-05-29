@@ -216,6 +216,11 @@ void show_registers(struct pt_regs *regs)
 		regs->esi, regs->edi, regs->ebp, esp);
 	printk("ds: %04x   es: %04x   ss: %04x\n",
 		regs->xds & 0xffff, regs->xes & 0xffff, ss);
+#ifdef CONFIG_IPIPE
+	if (ipipe_current_domain != ipipe_root_domain)
+	    printk("I-pipe domain %s",ipipe_current_domain->name);
+	else
+#endif /* CONFIG_IPIPE */	
 	printk("Process %s (pid: %d, stackpage=%08lx)",
 		current->comm, current->pid, 4096+(unsigned long)current);
 	/*
@@ -753,6 +758,10 @@ asmlinkage void do_spurious_interrupt_bug(struct pt_regs * regs,
  */
 asmlinkage void math_state_restore(struct pt_regs regs)
 {
+	unsigned long flags;
+
+	local_irq_save_hw_cond(flags);
+
 	__asm__ __volatile__("clts");		/* Allow maths ops (or we recurse) */
 
 	if (current->used_math) {
@@ -761,6 +770,8 @@ asmlinkage void math_state_restore(struct pt_regs regs)
 		init_fpu();
 	}
 	current->flags |= PF_USEDFPU;	/* So we fnsave on switch_to() */
+
+	local_irq_restore_hw_cond(flags);
 }
 
 #ifndef CONFIG_MATH_EMULATION

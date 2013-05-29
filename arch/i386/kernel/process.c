@@ -134,6 +134,7 @@ void cpu_idle (void)
 		void (*idle)(void) = pm_idle;
 		if (!idle)
 			idle = default_idle;
+		ipipe_suspend_domain();
 		while (!current->need_resched)
 			idle();
 		schedule();
